@@ -55,6 +55,7 @@ export function missedVaas(
   opts: MissedVaaOpts,
 ): Middleware {
   // set defaults
+  // what happens if we are actually using the cluster? (as we indeed are)
   opts.redis = opts.redis || { host: "localhost", port: 6379 };
   opts.redis.keyPrefix = opts.namespace;
   opts.wormholeRpcs = opts.wormholeRpcs ?? defaultWormholeRpcs[app.env];
@@ -79,7 +80,6 @@ export function missedVaas(
   app.addListener(RelayerEvents.Added, markVaaAsProcessed);
   app.addListener(RelayerEvents.Skipped, markVaaAsProcessed);
 
-  // construct dependency
   const fetchVaaFn = (vaaKey: VaaKey) => fetchVaa(opts.wormholeRpcs, vaaKey);
 
   // start worker
@@ -223,17 +223,19 @@ export async function tryFetchAndProcess(
   try {
     const isInProgress = await fetchIsInProgress(redis, key, logger);
     if (isInProgress) {
-      // short circuit is missedVaa middleware has already detected this vaa
+      // short circuit if missedVaa middleware has already detected this vaa
       return false;
     }
+
+    // before re-triggering middleware, mark key as in progress to avoid recursion
+    await markInProgress(redis, key, logger);
+
     const fetchedVaa = await fetchVaa(key);
     logger?.info(
       `Possibly missed a vaa, adding to queue.`,
       vaaKeyReadable(key),
     );
 
-    // before re-triggering middleware, mark key as in progress to avoid recursion
-    await markInProgress(redis, key, logger);
     // push the missed vaa through all the middleware / storage service if used.
     processVaa(Buffer.from(fetchedVaa.vaaBytes));
     return true;
